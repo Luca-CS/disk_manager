@@ -1,0 +1,21 @@
+/* Applications */
+.ap-stats { gap: 12px; }
+.ap-stat { padding: 14px 18px; min-width: 0; }
+.ap-filters { gap: 10px; }
+.ap-search { max-width: 420px; }
+.ap-search .input { width: 100%; }
+.ap-loading { padding: 32px; justify-content: center; color: var(--ink-3); }
+.ap-name { min-width: 0; max-width: 360px; }
+.ap-size { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.ap-size-top { gap: 8px; }
+.ap-size .badge { font-size: 11px; opacity: .85; }
+.ap-size .inline-bar { width: 90px; }
+.ap-version { color: var(--ink-2); }
+.ap-actions { gap: 4px; justify-content: flex-end; }
+@media (max-width: 1100px) { .ap-name { max-width: 240px; } }
+@media (max-width: 960px) {
+  .ap-name { max-width: 180px; }
+  .ap-stat { padding: 12px; }
+  .ap-stat .stat-value { font-size: 20px; }
+  .ap-search { max-width: none; }
+}

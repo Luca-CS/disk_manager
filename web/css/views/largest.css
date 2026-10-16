@@ -1,0 +1,31 @@
+/* Gros fichiers */
+.lg-filters { gap: 10px; }
+.lg-filters .select { min-width: 150px; }
+.lg-search { min-width: 220px; max-width: 420px; margin-left: auto; }
+.lg-search .input { width: 100%; }
+.lg-stats { gap: 12px; }
+.lg-stat { padding: 14px 18px; }
+.lg-loading { padding: 32px; justify-content: center; color: var(--ink-3); }
+.lg-table-wrap { max-height: none; }
+.lg-table td { padding-top: 8px; padding-bottom: 8px; }
+.lg-name { min-width: 0; max-width: 520px; }
+.lg-name .cell-path { max-width: 100%; }
+.lg-size { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.lg-size .inline-bar { width: 90px; }
+.lg-type { color: var(--ink-2); white-space: nowrap; }
+.lg-bulk {
+  position: sticky; bottom: 12px; z-index: 5;
+  display: flex; align-items: center; gap: 10px; padding: 10px 14px;
+  background: var(--surface); border: 1px solid var(--accent); border-radius: var(--radius);
+  box-shadow: var(--shadow-lg, 0 8px 24px rgba(0, 0, 0, .18));
+}
+@media (max-width: 1100px) {
+  .lg-name { max-width: 320px; }
+  .lg-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 960px) {
+  .lg-search { max-width: none; flex-basis: 100%; margin-left: 0; }
+  .lg-name { max-width: 240px; }
+  .lg-stat { padding: 12px; }
+  .lg-stat .stat-value { font-size: 20px; }
+}

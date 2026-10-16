@@ -1,0 +1,15 @@
+/* Types de fichiers */
+.ty-bars { margin-top: 14px; }
+.ty-bars .ch-row[aria-pressed="true"] { background: var(--accent-wash); box-shadow: inset 3px 0 0 var(--accent); }
+.ty-bars .ch-bars.ty-filtering .ch-row[aria-pressed="false"] { opacity: .6; }
+.ty-bars .ch-bars.ty-filtering .ch-row[aria-pressed="false"]:hover { opacity: 1; }
+.ty-table-wrap { max-height: 560px; }
+.ty-size-cell { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+.ty-size-num { min-width: 64px; text-align: right; }
+.ty-size-cell .inline-bar { width: 110px; flex: none; }
+.ty-more { display: flex; justify-content: center; padding-top: 10px; }
+.ty-file { display: flex; flex-direction: column; min-width: 0; max-width: 560px; }
+.ty-file .tight-row { gap: 8px; }
+.ty-fname { max-width: 420px; }
+.ty-caption { margin: 14px 0 0; max-width: 720px; }
+.ty-search .input { width: 260px; }

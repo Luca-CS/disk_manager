@@ -1,0 +1,23 @@
+/* Vue d'ensemble */
+.ov-top { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); }
+@media (max-width: 1180px) { .ov-top { grid-template-columns: 1fr; } }
+.ov-hero { display: flex; align-items: center; gap: 28px; padding: 24px 28px; }
+.ov-hero-ring { flex: none; }
+.ov-hero-text { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.ov-hero-badges { gap: 6px; margin-top: 6px; }
+.ov-hero-badges .badge { max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+.ov-free { display: flex; flex-direction: column; }
+.ov-free .card-footer { margin-top: auto; }
+.ov-free-total { align-items: baseline; gap: 12px; margin-bottom: 12px; }
+.ov-free-list { margin-bottom: 4px; }
+.ov-free-row { padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 13.5px; }
+.ov-free-row:last-child { border-bottom: 0; }
+.ov-free-empty { flex: 1; justify-content: center; }
+.ov-section-title { font-size: 12px; font-weight: 600; color: var(--ink-3); text-transform: uppercase; letter-spacing: .05em; }
+.ov-compo { gap: 32px; }
+.ov-unscanned { margin-top: 14px; display: flex; align-items: center; gap: 6px; }
+.ov-unscanned svg { width: 14px; height: 14px; }
+.ov-disk { padding: 14px 0; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 14px; }
+.ov-disk:first-of-type { border-top: 0; padding-top: 0; }
+.ov-disk-head svg { width: 22px; height: 22px; color: var(--accent); }
+.ov-disk .ch-disk-head { display: none; } /* the overview renders its own (French) disk header */

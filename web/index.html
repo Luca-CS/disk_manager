@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Disk Manager</title>
+  <link rel="icon" href="img/logo.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/app.css">
+  <link rel="stylesheet" href="css/charts.css">
+  <script type="module" src="js/app.js"></script>
+</head>
+<body>
+  <div class="app" id="app">
+    <aside class="sidebar" aria-label="Navigation">
+      <div class="brand">
+        <img class="brand-logo" src="img/logo.svg" alt="">
+        <div class="brand-text">
+          <div class="brand-name">Disk Manager</div>
+          <div class="brand-sub" id="brand-sub">Stockage local</div>
+        </div>
+      </div>
+      <nav class="nav" id="nav"></nav>
+      <div class="sidebar-footer" id="sidebar-footer"></div>
+    </aside>
+    <main class="main">
+      <header class="topbar">
+        <div class="topbar-titles">
+          <h1 id="view-title">Disk Manager</h1>
+          <div class="topbar-sub" id="view-sub"></div>
+        </div>
+        <div class="topbar-actions" id="view-actions"></div>
+      </header>
+      <div class="content" id="content">
+        <div class="content-inner" id="view-root"></div>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

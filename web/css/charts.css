@@ -1,0 +1,102 @@
+/* Disk Manager — chart components. Tokens only (see app.css). */
+
+/* ------------------------------------------------------------------ treemap */
+.ch-treemap { position: relative; width: 100%; height: 100%; min-height: 200px; overflow: hidden; }
+.ch-treemap canvas {
+  position: absolute; inset: 0; width: 100%; height: 100%; display: block;
+  border-radius: var(--radius-xs); cursor: default;
+}
+.ch-treemap canvas:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.ch-fade { opacity: 0; transform: scale(.985); }
+.ch-fade.ch-in { opacity: 1; transform: none; transition: opacity .28s var(--ease), transform .28s var(--ease); }
+
+/* ------------------------------------------------------------------ sunburst */
+.ch-sunburst { position: relative; width: 100%; height: 100%; min-height: 200px; overflow: hidden; }
+.ch-sunburst svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.ch-sunburst .ch-arc { cursor: pointer; }
+.ch-sunburst .ch-center { cursor: pointer; }
+.ch-sunburst .ch-center:focus-visible { outline: none; }
+.ch-sunburst .ch-center:focus-visible circle { stroke: var(--accent); stroke-width: 2px; }
+
+/* ------------------------------------------------------------------ bars */
+.ch-bars { display: flex; flex-direction: column; gap: 2px; }
+.ch-row {
+  display: grid; grid-template-columns: 10px minmax(90px, 1.3fr) minmax(60px, 1fr) auto;
+  align-items: center; column-gap: 12px;
+  padding: 7px 8px; border-radius: var(--radius-xs);
+  background: none; border: 0; color: var(--ink); text-align: left; width: 100%;
+  transition: background .12s var(--ease);
+}
+button.ch-row { cursor: pointer; }
+.ch-row:hover { background: var(--surface-2); }
+.ch-row .dot { width: 10px; height: 10px; }
+.ch-row-label { min-width: 0; display: flex; flex-direction: column; }
+.ch-row-label > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ch-row-sub { color: var(--ink-3); font-size: 12px; }
+.ch-row-track { height: 6px; border-radius: 0 4px 4px 0; background: transparent; position: relative; }
+.ch-row-fill { position: absolute; inset: 0 auto 0 0; border-radius: 0 4px 4px 0; min-width: 2px; transition: filter .12s; }
+.ch-row:hover .ch-row-fill { filter: brightness(1.08); }
+.ch-row-value { display: flex; gap: 10px; justify-content: flex-end; align-items: baseline; font-variant-numeric: tabular-nums; }
+.ch-row-value .ch-val { min-width: 64px; text-align: right; font-weight: 550; }
+.ch-row-value .ch-pct { min-width: 40px; text-align: right; color: var(--ink-3); font-size: 12.5px; }
+
+.ch-stack { display: flex; gap: 2px; width: 100%; }
+.ch-stack-seg {
+  display: block; min-width: 0; padding: 0; margin: 0; border: 0; cursor: default;
+  transition: filter .12s; position: relative;
+}
+button.ch-stack-seg { cursor: pointer; }
+.ch-stack-seg::after { content: ""; position: absolute; inset: -6px 0; } /* generous hit target */
+.ch-stack-seg:hover { filter: brightness(1.12); }
+.ch-stack-seg:first-child { border-top-left-radius: 4px; border-bottom-left-radius: 4px; }
+.ch-stack-seg:last-child { border-top-right-radius: 4px; border-bottom-right-radius: 4px; }
+.ch-stack-rest { background: var(--surface-2); cursor: default; }
+.ch-stack-rest:hover { filter: none; }
+
+/* ------------------------------------------------------------------ disk map */
+.ch-disk { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.ch-disk-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ch-disk-title { font-weight: 600; }
+.ch-disk-meta { color: var(--ink-3); font-size: 12.5px; }
+.ch-disk-bar { display: flex; gap: 2px; height: 40px; }
+.ch-disk-seg {
+  --h: var(--ink-3);
+  position: relative; display: block; min-width: 0; padding: 0; margin: 0; border: 0; overflow: hidden;
+  background: color-mix(in srgb, var(--h) 18%, var(--surface));
+  transition: filter .12s;
+}
+button.ch-disk-seg { cursor: pointer; }
+.ch-disk-seg:hover { filter: brightness(1.1); }
+.ch-disk-seg:first-child { border-top-left-radius: 8px; border-bottom-left-radius: 8px; }
+.ch-disk-seg:last-child { border-top-right-radius: 8px; border-bottom-right-radius: 8px; }
+.ch-disk-seg.solid { background: var(--h); }
+.ch-disk-seg.selected { outline: 2px solid var(--ink); outline-offset: 1px; }
+.ch-disk-seg.gap {
+  background: repeating-linear-gradient(135deg, var(--grid) 0 2px, var(--surface-2) 2px 7px);
+}
+.ch-disk-used { position: absolute; inset: 0 auto 0 0; background: var(--h); }
+.ch-disk-os { --h: var(--accent); }
+.ch-disk-data { --h: var(--series-3); }
+.ch-disk-neutral { --h: color-mix(in srgb, var(--ink-3) 70%, var(--surface)); }
+.ch-disk-caps { display: flex; gap: 2px; }
+.ch-disk-cap { min-width: 0; overflow: hidden; font-size: 12px; line-height: 1.35; padding: 0 2px; }
+.ch-disk-cap .ch-cap-name { color: var(--ink); font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ch-disk-cap .ch-cap-sub { color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ch-disk-list { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 12px; }
+.ch-disk-list:empty { display: none; }
+.ch-disk-list .ch-cap { display: inline-flex; align-items: center; gap: 6px; }
+.ch-disk-list .ch-cap-sub { color: var(--ink-3); }
+.ch-disk-list .ch-cap-name { font-weight: 550; }
+.ch-disk-list .dot { width: 9px; height: 9px; }
+
+/* ------------------------------------------------------------------ area / ring */
+.ch-area { position: relative; width: 100%; height: 100%; min-height: 160px; }
+.ch-area svg { display: block; width: 100%; }
+.ch-area-note { position: absolute; left: 0; right: 0; top: 14px; text-align: center; color: var(--ink-3); font-size: 12.5px; }
+.ch-ring { display: block; }
+
+/* ------------------------------------------------------------------ demo page only */
+.ch-demo { height: 100vh; overflow: auto; padding: 20px 32px 48px; }
+.ch-demo-inner { max-width: 1280px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
+.ch-demo-box { height: 460px; }
+.ch-demo-rings { display: flex; gap: 28px; flex-wrap: wrap; align-items: center; }
