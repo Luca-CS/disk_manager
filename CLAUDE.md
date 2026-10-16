@@ -18,7 +18,7 @@ path rules and gives wrong results):
 ```
 "$PY" run.py --no-window --dry-run       # dev server only; prints http://127.0.0.1:<port>/#t=<token>
 "$PY" run.py --dry-run --debug           # full app (window); every deletion simulated; requests logged to data/app.log
-"$PY" -m unittest discover -s tests -t .                          # all tests (~40 s, 150 tests)
+"$PY" -m unittest discover -s tests -t .                          # all tests (~60 s, 168 tests)
 "$PY" -m unittest tests.test_safety_races                         # one module
 "$PY" -m unittest tests.test_safety.PurgeTests.test_min_age_keeps_recent_files   # one test
 "/c/Program Files/nodejs/node.exe" --check web/js/views/clean.js  # JS syntax check (no linter configured)
@@ -39,8 +39,11 @@ opens the window and lives until the Edge process exits or heartbeats (`POST /ap
 `server.py` enforces: Host header = `127.0.0.1:<port>`/`localhost:<port>`, per-launch token in `X-DM-Token`,
 same-origin `Origin`/`Sec-Fetch-Site`, JSON-only POST ≤ 1 MB, static files only from `web/` with an extension
 whitelist, strict CSP (`script-src 'self'`, no inline JS). The token reaches the page via the URL fragment
-(`#t=`), is kept in sessionStorage by `web/js/api.js`. `data/instance.json` (pid/port/token) implements
-single-instance; it is never written in `--no-window` mode or when elevated.
+(`#t=`), is kept in sessionStorage by `web/js/api.js`. When elevated, the window URL carries a one-time code
+instead (`#c=`, `run._window_url`), traded once within 15 s by the token-less `POST /api/session`; the page then
+keeps the token in memory only (command lines and the Edge profile are readable by non-admin processes).
+`data/instance.json` (pid/port/token) implements single-instance; it is never written in `--no-window` mode or
+when elevated.
 
 **Long operations are tasks** (`dm/tasks.py`): a POST starts a thread and returns the task dict; the UI polls
 `GET /api/tasks/<id>`. One running task per group: `scan` (scan, dupes), `clean` (clean_analyze), `delete`
@@ -58,12 +61,15 @@ sizes; aggregates are recomputed on load.
 - `recycle(paths)` (user-chosen items → recycle bin via `SHFileOperationW` + `FOF_ALLOWUNDO|FOF_WANTNUKEWARNING`):
   each path through `check_recyclable`, ancestors held open without `FILE_SHARE_DELETE` (`_lock_ancestors`)
   during the shell call.
-- `purge(target)` (permanent, regenerable caches only): `check_purgeable` whitelist (`PURGE_USER_ROOTS`,
-  `PURGE_SYSTEM_ROOTS`, regenerable dir names), then every file/dir/link is deleted through `winapi.Handle`
+- `purge(target)` (permanent, regenerable caches only): `check_purgeable` allow-list (`%TEMP%`,
+  `PURGE_SYSTEM_ROOTS`, `PURGE_CACHE_PATTERNS` = cache-folder name patterns under AppData / the profile,
+  regenerable dir names outside AppData and `~\.*`); a new rule target must match one of them, or it measures 0.
+  Then every file/dir/link is deleted through `winapi.Handle`
   (opened with `FILE_FLAG_OPEN_REPARSE_POINT`, final path re-checked on the handle, disposition set on that
   handle). Do not reintroduce `os.unlink`/`os.rmdir`/`os.chmod` on path strings after validation: that
   re-opens the junction-swap TOCTOU found in the security review (`tests/test_safety_races.py`).
-- Both refuse anything inside or containing `PROTECTED_TREES`/`PROTECTED_EXACT`, links in the chain,
+- Both refuse anything inside or containing `PROTECTED_TREES`/`PROTECTED_EXACT` (+ every profile root:
+  `C:\Users\*` and registry `ProfileList`, re-read every 2 s by `profile_roots()`), links in the chain,
   paths whose `realpath` differs (8.3 names), trailing dots/spaces, ADS, UNC/device paths. Every operation is
   appended to `data/journal.jsonl`.
 

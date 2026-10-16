@@ -21,6 +21,10 @@ Task groups: only one running task per group — `scan` (scan, dupes), `clean` (
 ## App & system
 - `GET /api/meta` → `{version, admin, dry_run, python, keep_file_min, categories: [{key, label}], user, computer, paths: {home, downloads, system_drive}}`
 - `POST /api/ping` (heartbeat, done by the shell) · `POST /api/app/quit` · `POST /api/app/elevate`
+- `POST /api/session {code}` → `{token}` — the only call **without** `X-DM-Token`: an elevated window's URL
+  carries a one-time code (`#c=`) instead of the token (`#t=`); `web/js/api.js` trades it here and keeps the
+  token in memory only. Works once, within `LOGIN_CODE_TTL_S` (15 s), and needs a same-origin `Origin`
+  header. Wrong / expired code → 401 `bad_code`; a code presented twice also replaces the session token.
 - `GET /api/volumes` → `{volumes: [{letter, root, label, fs, type: fixed|removable|network|ramdisk, total, free, used, is_system}], recycle_bin: {size, count}}`
 - `GET /api/system[?refresh=1]` → `{disks: [{number, model, media, bus, health, status, size, partition_style, reliability|null, partitions: [{number, letter, type, kind, offset, size, label, fs, free, used, health, is_boot, is_system}]}], volumes, error, collected_at, memory: {total, available}, special_files: {pagefile?, hiberfil?, swapfile?}, recycle_bin}` (first call ≈ 5 s)
 

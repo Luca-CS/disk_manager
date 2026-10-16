@@ -1,6 +1,8 @@
 import http.client
 import json
 import os
+import re
+import sys
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -176,6 +178,69 @@ class ApiAuthTests(ServerCase):
 
     def test_post_static_405(self):
         self.assertEqual(self.req("POST", "/index.html", json_body={})[0], 405)
+
+
+class LoginCodeTests(ServerCase):
+    """Elevated window: a one-time code in its URL instead of the token (command lines are readable)."""
+
+    def exchange(self, code, origin=True, **kw):
+        origin = f"http://127.0.0.1:{self.port}" if origin is True else origin
+        headers = {**({"Origin": origin} if origin else {}), **kw.pop("headers", {})}
+        return self.req("POST", "/api/session", token=False, json_body={"code": code}, headers=headers, **kw)
+
+    def test_code_traded_once_for_token(self):
+        code = self.server.issue_login_code()
+        st, _, body = self.exchange(code)
+        self.assertEqual(st, 200)
+        self.assertEqual(body, {"token": self.token})
+        self.assertEqual(self.req("GET", "/api/meta", token=body["token"])[0], 200)
+
+    def test_reused_code_replaces_token(self):
+        code = self.server.issue_login_code()
+        stolen = self.exchange(code)[2]["token"]  # e.g. another process won the race
+        self.assertError(self.exchange(code), 401, "bad_code")  # the window comes second
+        self.assertNotEqual(self.server.token, stolen)
+        self.assertError(self.req("GET", "/api/meta", token=stolen), 401, "bad_token")
+        self.assertError(self.exchange(code), 401, "bad_code")
+
+    def test_expired_code_refused(self):
+        code = self.server.issue_login_code(ttl=-1)
+        self.assertError(self.exchange(code), 401, "bad_code")
+        self.assertEqual(self.server.token, self.token)
+
+    def test_wrong_codes_refused_without_burning_the_code(self):
+        self.assertError(self.exchange("A" * 43), 401, "bad_code")  # no code issued yet
+        code = self.server.issue_login_code()
+        for bad in ("A" * 43, code[:-1], code + "A", "", "é" * 43, 12, None, [code]):
+            with self.subTest(bad=bad):
+                self.assertError(self.exchange(bad), 401, "bad_code")
+        self.assertEqual(self.exchange(code)[0], 200)
+
+    def test_same_origin_and_host_enforced(self):
+        code = self.server.issue_login_code()
+        for origin in (None, "http://evil.example.com", "null", f"http://127.0.0.1:{self.port + 1}"):
+            with self.subTest(origin=origin):
+                self.assertError(self.exchange(code, origin=origin), 403, "bad_origin")
+        self.assertError(self.exchange(code, headers={"Sec-Fetch-Site": "cross-site"}), 403, "bad_origin")
+        self.assertError(self.exchange(code, host="evil.example.com"), 403, "bad_host")
+        self.assertError(self.req("POST", "/api/session", token=False, body=f"code={code}".encode(),
+                                  headers={"Origin": f"http://127.0.0.1:{self.port}",
+                                           "Content-Type": "application/x-www-form-urlencoded"}), 415)
+        self.assertEqual(self.exchange(code)[0], 200)  # none of the refusals burnt it
+
+    def test_session_route_is_the_only_token_less_one(self):
+        self.assertError(self.req("GET", "/api/session", token=False), 401, "bad_token")
+        self.assertError(self.req("POST", "/api/session/x", token=False, json_body={}), 401, "bad_token")
+
+    def test_elevated_window_url_carries_code_not_token(self):
+        with mock.patch.object(sys, "argv", ["run.py"]):
+            import run
+        url = run._window_url(self.server, elevated=True)
+        self.assertNotIn(self.token, url)
+        m = re.fullmatch(re.escape(self.server.url) + r"#c=([A-Za-z0-9_-]{20,})", url)
+        self.assertIsNotNone(m, url)
+        self.assertEqual(self.server.redeem_login_code(m.group(1)), self.token)
+        self.assertEqual(run._window_url(self.server, elevated=False), f"{self.server.url}#t={self.token}")
 
 
 class SecurityHeaderTests(ServerCase):

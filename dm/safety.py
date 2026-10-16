@@ -5,8 +5,9 @@ Two operations exist, both validated server-side whatever the UI sends:
 * ``recycle(paths)`` — user-chosen files/folders go to the Windows recycle bin
   (reversible). Refused for system locations, profile roots, links...
 * ``purge(target)`` — permanent deletion, reserved for regenerable caches
-  declared by cleanup rules. Only allowed inside a small whitelist of roots,
-  never inside personal folders, never through a junction or symlink.
+  declared by cleanup rules. Only allowed inside folders that are caches by
+  construction (allow-list of name patterns), never inside personal folders,
+  never through a junction or symlink.
 
 Every completed operation is written to the journal. Set ``DM_DRY_RUN=1`` to
 simulate deletions (nothing is touched, results are computed as if it was).
@@ -138,18 +139,9 @@ PROTECTED_TREES = [
     sys.prefix,
 ]
 
-def _all_profile_roots() -> list[str]:
-    """Every folder directly under C:\\Users (other people's profiles too)."""
-    users = os.path.join(SD, "Users")
-    try:
-        return [e.path for e in os.scandir(users) if e.is_dir(follow_symlinks=False)]
-    except OSError:
-        return []
-
-
-# Deletable content, but the folder itself must stay.
+# Deletable content, but the folder itself must stay. User profile roots are
+# added at check time (see profile_roots / _protected_exact).
 PROTECTED_EXACT = [
-    *_all_profile_roots(),
     os.path.join(SD, "Users"),
     os.path.join(SD, "Users", "Public"),
     config.USERPROFILE,
@@ -165,12 +157,120 @@ PROTECTED_EXACT = [
 PROTECTED_ROOT_FILES = {"pagefile.sys", "hiberfil.sys", "swapfile.sys", "bootmgr", "bootnxt", "dumpstack.log"}
 _PROFILE_HIVES = re.compile(r"^(ntuser\.(dat|ini|pol)|usrclass\.dat)", re.IGNORECASE)
 
-# Permanent deletion is only ever allowed strictly inside these roots: the
-# per-user application data folders and well-known developer cache folders.
-PURGE_USER_ROOTS = [config.LOCALAPPDATA, config.APPDATA, config.TEMP] + [
-    os.path.join(config.USERPROFILE, d)
-    for d in (".cache", ".gradle", ".m2", ".cargo", ".nuget", ".keras", "go", "anaconda3", "miniconda3")
+_PROFILE_LIST_KEY = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList"
+_PROFILES_TTL_S = 2.0
+_profiles_lock = threading.Lock()
+_profiles_cache: tuple[float, tuple[str, ...]] = (float("-inf"), ())
+
+
+def _expand_profile_path(value) -> str | None:
+    if not isinstance(value, str):
+        return None
+    p = os.path.normpath(os.path.expandvars(value))
+    return p if _DRIVE_ABS.match(p) and not _is_drive_root(p) else None
+
+
+def _read_profile_list() -> tuple[list[str], str | None]:
+    """(ProfileImagePath of every account, ProfilesDirectory) from HKLM ProfileList."""
+    paths, profiles_dir = [], None
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, _PROFILE_LIST_KEY) as k:
+            try:
+                profiles_dir = _expand_profile_path(winreg.QueryValueEx(k, "ProfilesDirectory")[0])
+            except OSError:
+                pass
+            i = 0
+            while True:
+                try:
+                    sid = winreg.EnumKey(k, i)
+                except OSError:
+                    break
+                i += 1
+                try:
+                    with winreg.OpenKey(k, sid) as sk:
+                        p = _expand_profile_path(winreg.QueryValueEx(sk, "ProfileImagePath")[0])
+                except OSError:
+                    continue
+                if p:
+                    paths.append(p)
+    except OSError:
+        pass
+    return paths, profiles_dir
+
+
+def profile_roots() -> tuple[str, ...]:
+    """Every user profile folder (other people's too): the children of C:\\Users and of the registry's
+    ProfilesDirectory, plus each account's ProfileImagePath (profiles moved to another drive...).
+
+    Re-read every few seconds, so an account created after start-up is protected as well.
+    """
+    global _profiles_cache
+    with _profiles_lock:
+        expires, roots = _profiles_cache
+    if time.monotonic() < expires:
+        return roots
+    found, profiles_dir = _read_profile_list()
+    parents = [os.path.join(SD, "Users")]
+    if profiles_dir:
+        found.append(profiles_dir)
+        parents.append(profiles_dir)
+    for parent in parents:
+        try:
+            found += [e.path for e in os.scandir(parent) if e.is_dir(follow_symlinks=False)]
+        except OSError:
+            pass
+    roots = tuple({key(p): p for p in found}.values())
+    with _profiles_lock:
+        _profiles_cache = (time.monotonic() + _PROFILES_TTL_S, roots)
+    return roots
+
+
+def _protected_exact() -> list[str]:
+    return [*PROTECTED_EXACT, *profile_roots()]
+
+
+# Outside PURGE_SYSTEM_ROOTS and %TEMP%, permanent deletion is limited to
+# folders that are caches by construction: (root, regex of the cache folder
+# relative to root, optional extra check on that folder). A target is accepted
+# when it is such a folder or lies inside one. Everything else in AppData and
+# in the profile (installed applications, browser profiles with saved
+# passwords, settings, ~\.cargo\bin...) is refused.
+_CHROMIUM_CACHES = (r"(?:cache|code cache|gpucache|(?:graphite)?dawn\w*cache|grshadercache|shadercache"
+                    r"|service worker\\(?:cachestorage|scriptcache))")
+_ANY_DEPTH = r"(?:[^\\]+\\)*"
+
+
+def _is_squirrel_app(folder: str) -> bool:
+    """`folder` sits next to a regular Update.exe (Squirrel installer layout: app-<version> folders)."""
+    try:
+        st = os.lstat(os.path.join(os.path.dirname(folder), "Update.exe"))
+    except OSError:
+        return False
+    return not st.st_file_attributes & (winapi.FILE_ATTRIBUTE_DIRECTORY | winapi.FILE_ATTRIBUTE_REPARSE_POINT)
+
+
+_L, _R, _H = config.LOCALAPPDATA, config.APPDATA, config.USERPROFILE
+PURGE_CACHE_PATTERNS = [
+    (root, re.compile(rf"(?:{rx})(?=\\|$)", re.IGNORECASE), check) for root, rx, check in [
+        # Chromium / Electron caches (browsers, Discord, Teams, VS Code...), wherever the app keeps its profile.
+        (_L, _ANY_DEPTH + _CHROMIUM_CACHES, None),
+        (_R, _ANY_DEPTH + _CHROMIUM_CACHES, None),
+        (_L, r"mozilla\\firefox\\profiles\\[^\\]+\\(?:cache2|startupcache|thumbnails)", None),
+        (_L, r"crashdumps|d3dscache|nvidia\\(?:dx|gl)cache|amd\\(?:dx|dxc|gl|vk)cache|intel\\shadercache", None),
+        (_L, r"microsoft\\vscode-cpptools\\ipch", None),
+        (_R, r"code\\(?:cachedextensionvsixs|cacheddata|logs)", None),
+        (_L, r"spotify\\(?:data|storage)", None),
+        (_L, r"[^\\]+-updater", None),  # electron-builder update downloads
+        (_L, r"[^\\]+\\app-\d[^\\]*", _is_squirrel_app),  # old versions of Squirrel apps (Discord, Slack...)
+        (_L, r"npm-cache\\(?:_cacache|_npx)|yarn\\cache|pnpm-cache|pnpm\\store|pip\\cache|uv\\cache"
+             r"|nuget\\(?:v3|plugins)-cache|go-build|conda\\conda\\pkgs", None),
+        (_H, r"\.cache\\(?:huggingface|torch)|\.gradle\\caches|\.m2\\repository|\.cargo\\registry"
+             r"|\.nuget\\packages|\.keras\\models|go\\pkg\\mod|(?:ana|mini)conda3\\pkgs", None),
+    ]
 ]
+# Never purged, even when a folder inside matches a pattern: per-user installed applications.
+PURGE_EXCLUDED = [os.path.join(config.LOCALAPPDATA, "Programs")]
+
 # Explicit system cache locations (inside otherwise protected trees). Purging
 # them usually needs administrator rights.
 PURGE_SYSTEM_ROOTS = [
@@ -208,7 +308,7 @@ def _exact_any(p: str, roots) -> bool:
 def _contains_protected(p: str) -> bool:
     """True when a protected location lies strictly inside `p` (deleting `p` would take it along)."""
     kp = key(p)
-    for r in (*PROTECTED_TREES, *PROTECTED_EXACT):
+    for r in (*PROTECTED_TREES, *_protected_exact()):
         if key(r) != kp and is_within(r, p):
             return True
     return False
@@ -245,7 +345,7 @@ def check_recyclable(path: str, scope_root: str | None = None) -> str:
         raise Refused("L'élément est hors du dossier analysé.")
     if _within_any(p, PROTECTED_TREES):
         raise Refused("Emplacement système protégé.")
-    if _exact_any(p, PROTECTED_EXACT):
+    if _exact_any(p, _protected_exact()):
         raise Refused("Dossier essentiel : son contenu peut être nettoyé, pas le dossier lui-même.")
     if _contains_protected(p):
         raise Refused("Ce dossier contient des éléments système ou essentiels : refusé.")
@@ -262,12 +362,38 @@ def check_recyclable(path: str, scope_root: str | None = None) -> str:
 
 
 def _is_regenerable_dir(p: str) -> bool:
-    if os.path.basename(p).lower() not in REGENERABLE_DIR_NAMES:
+    """A project build folder (node_modules...) in the profile, outside the places where tools keep their
+    own copies: AppData (per-user installed applications) and the hidden tool folders at the profile root
+    (~\\.vscode\\extensions...). %TEMP% stays allowed."""
+    if os.path.basename(p).lower() not in REGENERABLE_DIR_NAMES or not is_within(p, config.USERPROFILE):
         return False
+    if not is_within(p, config.TEMP):
+        if is_within(p, os.path.join(config.USERPROFILE, "AppData")):
+            return False
+        if key(p)[len(key(config.USERPROFILE)) + 1:].startswith("."):
+            return False
     try:
         return bool(os.lstat(p).st_file_attributes & winapi.FILE_ATTRIBUTE_DIRECTORY)
     except OSError:
         return False
+
+
+def is_cache_location(p: str) -> bool:
+    """True when `p` (canonical) is %TEMP%, a folder matching PURGE_CACHE_PATTERNS, or inside one.
+    Location only: check_purgeable adds the protected-location and link checks."""
+    if is_within(p, config.TEMP):
+        return True  # purge() always keeps the %TEMP% folder itself
+    if _within_any(p, PURGE_EXCLUDED):
+        return False
+    kp = key(p)
+    for root, rx, check in PURGE_CACHE_PATTERNS:
+        kr = key(root)
+        if not kp.startswith(kr + "\\"):
+            continue
+        m = rx.match(kp[len(kr) + 1:])
+        if m and (check is None or check(os.path.join(root, m.group(0)))):
+            return True
+    return False
 
 
 def check_purgeable(path: str) -> str:
@@ -277,15 +403,15 @@ def check_purgeable(path: str) -> str:
         raise Refused("Racine de disque refusée.")
     if _within_any(p, PURGE_SYSTEM_ROOTS):
         pass  # explicit system cache folders (inside otherwise protected trees)
-    elif _is_regenerable_dir(p) and is_within(p, config.USERPROFILE):
+    elif _is_regenerable_dir(p):
         # e.g. an inactive project's node_modules, wherever it lives in the profile
         if _within_any(p, PROTECTED_TREES):
             raise Refused("Emplacement système protégé.")
     else:
-        if not _within_any(p, PURGE_USER_ROOTS):
+        if not is_cache_location(p):
             raise Refused("Hors des emplacements de cache autorisés.")
         # %TEMP% is the one root whose *content* may be purged (purge() keeps the folder).
-        if not _exact_any(p, [config.TEMP]) and (_exact_any(p, PURGE_USER_ROOTS) or _exact_any(p, PROTECTED_EXACT)):
+        if not _exact_any(p, [config.TEMP]) and _exact_any(p, _protected_exact()):
             raise Refused("Dossier racine refusé : seule une cible précise peut être nettoyée.")
         if _within_any(p, PROTECTED_TREES):
             raise Refused("Emplacement système protégé.")
@@ -372,7 +498,7 @@ def purge(target: str, *, min_age_s: float = 0, keep_root: bool = True, name_glo
     """
     res = result or OpResult()
     p = check_purgeable(target)
-    if _exact_any(p, PROTECTED_EXACT) or _exact_any(p, PURGE_SYSTEM_ROOTS):
+    if _exact_any(p, _protected_exact()) or _exact_any(p, PURGE_SYSTEM_ROOTS):
         keep_root = True  # never remove a whitelisted root folder itself
     now = time.time()
     root_st = os.lstat(p)

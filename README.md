@@ -42,10 +42,16 @@ lancement suivant.
   sites web malveillants qui tenteraient de piloter l'application).
 - **Suppressions encadrées** (`dm/safety.py`, seul module autorisé à supprimer) :
   - vos fichiers (gros fichiers, doublons, explorateur) vont **à la corbeille** et sont restaurables ;
-  - la suppression définitive est réservée aux caches et fichiers temporaires régénérables, dans une liste
-    blanche d'emplacements, jamais dans vos dossiers personnels ;
-  - emplacements système refusés (Windows, Program Files, ProgramData, racines de profil, fichiers système,
-    clés `.ssh`…), ainsi que tout dossier qui en contient ;
+  - la suppression définitive est réservée aux caches et fichiers temporaires régénérables : seuls sont
+    acceptés `%TEMP%`, quelques caches système précis et les dossiers qui sont des caches par nature
+    (liste blanche de noms : `Cache`, `Code Cache`, `GPUCache`, `cache2`, caches npm / pip / Gradle / Cargo…).
+    Le reste d'AppData et du profil est refusé : applications installées (`AppData\Local\Programs`), profils
+    de navigateur (mots de passe, cookies), réglages, `~\.cargo\bin`… Jamais dans vos dossiers personnels ;
+  - emplacements système refusés (Windows, Program Files, ProgramData, fichiers système, clés `.ssh`…), ainsi
+    que tout dossier qui en contient ;
+  - racines de profil de **tous** les comptes protégées : sous-dossiers de `C:\Users` et profils déclarés dans
+    le registre (`ProfileList`, y compris ceux déplacés sur un autre disque). La liste est relue pendant que
+    l'application tourne : un compte créé après le lancement est aussi protégé ;
   - jonctions et liens symboliques jamais suivis, noms courts 8.3 et chemins ambigus refusés ;
   - chaque suppression passe par un *handle* ouvert sans suivre les liens et dont l'emplacement réel est
     re-vérifié juste avant d'agir : remplacer un dossier par une jonction pendant un nettoyage ne permet pas de
@@ -61,7 +67,12 @@ Le bouton « Relancer en administrateur » sert uniquement à nettoyer les cache
 fichiers temporaires de Windows…). Dans ce mode, l'application exécute le code de ce dossier avec des droits
 élevés : ne l'utilisez que si ce dossier n'est modifiable que par vous (ou installez l'application dans un
 emplacement protégé comme `C:\Program Files`). Le jeton de session n'est jamais écrit sur disque en mode
-administrateur.
+administrateur, ni placé sur la ligne de commande de la fenêtre (lisible par tous les programmes de la
+session) : la fenêtre reçoit à la place un code à usage unique, valable quelques secondes, que la page échange
+contre le jeton puis garde uniquement en mémoire. Si un autre programme utilise ce code avant la fenêtre, le
+jeton est aussitôt renouvelé : la session volée ne sert à rien, et la fenêtre affiche « Session expirée »
+(relancez alors l'application). Pour la même raison, recharger la page (F5) en mode administrateur ferme la
+session.
 
 ## Données locales
 

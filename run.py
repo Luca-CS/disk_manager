@@ -68,6 +68,14 @@ def _existing_instance() -> dict | None:
         return None
 
 
+def _window_url(server: AppServer, elevated: bool) -> str:
+    """URL opened in the app window. Any process of the user can read the browser's command line, so an
+    elevated window gets a one-time code (traded for the token by web/js/api.js) instead of the token."""
+    if elevated:
+        return f"{server.url}#c={server.issue_login_code()}"
+    return f"{server.url}#t={server.token}"
+
+
 def main() -> int:
     _setup_logging()
     if ARGS.install_shortcut:
@@ -86,18 +94,19 @@ def main() -> int:
     state = AppState()
     server = AppServer(build_router(state))
     url = f"{server.url}#t={server.token}"
+    elevated = winapi.is_admin()
     # Dev/test servers never register as the main instance, and an elevated
     # instance never writes its token to the (user-writable) data folder.
-    if not ARGS.no_window and not winapi.is_admin():
+    if not ARGS.no_window and not elevated:
         config.INSTANCE_PATH.write_text(json.dumps({"pid": os.getpid(), "port": server.port, "token": server.token}),
                                         encoding="utf-8")
     serve_forever_in_thread(server)
     threading.Thread(target=history.sample_usage, daemon=True).start()
     preload_cached_scan(state)
-    log.info("Disk Manager listening on %s (admin=%s, dry_run=%s)", server.url, winapi.is_admin(),
+    log.info("Disk Manager listening on %s (admin=%s, dry_run=%s)", server.url, elevated,
              os.environ.get("DM_DRY_RUN") == "1")
 
-    proc = None if ARGS.no_window else window.open_window(url)
+    proc = None if ARGS.no_window else window.open_window(_window_url(server, elevated))
     if proc is not None:
         state.window_pids = {proc.pid}
     if ARGS.no_window:

@@ -1,20 +1,41 @@
 // API client. The session token arrives once in the URL fragment (#t=...),
 // is kept in sessionStorage for reloads, and sent as X-DM-Token on every call.
+// An elevated window gets a one-time code instead (#c=...): it is traded for the
+// token, which then stays in memory only (sessionStorage can be written to the
+// Edge profile, a folder the non-elevated user can read).
 
 const TOKEN_KEY = 'dm-token';
 
-function readToken() {
-  const m = /[#&]t=([A-Za-z0-9_-]{20,})/.exec(location.hash);
-  let token = m ? m[1] : null;
+async function exchangeCode(code) {
+  try {
+    const res = await fetch('/api/session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code }),
+      cache: 'no-store',
+      credentials: 'same-origin',
+      redirect: 'error',
+    });
+    const data = await res.json();
+    return res.ok && typeof data.token === 'string' ? data.token : '';
+  } catch {
+    return ''; // the first API call then reports the expired session
+  }
+}
+
+async function readToken() {
+  const m = /[#&]([tc])=([A-Za-z0-9_-]{20,})/.exec(location.hash);
+  if (m) history.replaceState(null, '', location.pathname + location.search + '#/overview');
+  if (m && m[1] === 'c') return exchangeCode(m[2]);
+  let token = m ? m[2] : null;
   try {
     if (token) sessionStorage.setItem(TOKEN_KEY, token);
     else token = sessionStorage.getItem(TOKEN_KEY);
   } catch { /* storage unavailable: keep the in-memory token */ }
-  if (m) history.replaceState(null, '', location.pathname + location.search + '#/overview');
   return token || '';
 }
 
-const TOKEN = readToken();
+const TOKEN = await readToken();
 
 export class ApiError extends Error {
   constructor(message, status, code) {

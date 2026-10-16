@@ -6,6 +6,10 @@ Security model
 * every /api call needs the per-launch random token in the X-DM-Token header.
   Browsers cannot add custom headers cross-origin without a CORS preflight,
   which this server never grants, so other websites cannot drive the API;
+* the one exception is POST /api/session, which trades the one-time login code
+  of an elevated window (its URL carries that code instead of the token, since
+  any process of the user can read a command line) for the token: once, within
+  LOGIN_CODE_TTL_S, with a same-origin Origin header;
 * Origin / Sec-Fetch-Site must be same-origin when present;
 * strict Content-Security-Policy: scripts only from this origin, no inline JS,
   no eval, no outbound connections; nosniff, no-referrer, frame-ancestors none;
@@ -43,6 +47,9 @@ _STATIC_PATH = re.compile(r"^/[A-Za-z0-9_\-./]{1,200}$")
 CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; "
        "img-src 'self' data:; font-src 'self'; connect-src 'self'; manifest-src 'self'; "
        "base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+
+# Lifetime of the one-time login code of an elevated window (Edge start + page load).
+LOGIN_CODE_TTL_S = 15.0
 
 
 class ApiError(Exception):
@@ -115,6 +122,10 @@ class AppServer(ThreadingHTTPServer):
         self.router = router
         self.token = secrets.token_urlsafe(32)
         self.last_ping = time.monotonic()
+        self._login_lock = threading.Lock()
+        self._login_code: str | None = None
+        self._login_expires = 0.0
+        self._login_used = False
         super().__init__(("127.0.0.1", 0), Handler)
         self.port = self.server_address[1]
         self.allowed_hosts = {f"127.0.0.1:{self.port}", f"localhost:{self.port}"}
@@ -123,6 +134,36 @@ class AppServer(ThreadingHTTPServer):
     @property
     def url(self) -> str:
         return f"http://127.0.0.1:{self.port}/"
+
+    def issue_login_code(self, ttl: float = LOGIN_CODE_TTL_S) -> str:
+        """A one-time code to put in the window URL instead of the token (replaces any previous code)."""
+        code = secrets.token_urlsafe(32)
+        with self._login_lock:
+            self._login_code, self._login_expires, self._login_used = code, time.monotonic() + ttl, False
+        return code
+
+    def redeem_login_code(self, code) -> str | None:
+        """The session token when `code` is the pending login code, unused and not expired; else None.
+
+        A code presented a second time means another process raced the window for it: the token is then
+        replaced, so whatever session was obtained with the code stops working too.
+        """
+        if not isinstance(code, str):
+            return None
+        with self._login_lock:
+            pending = self._login_code
+            if pending is None or not hmac.compare_digest(code.encode("utf-8"), pending.encode("ascii")):
+                return None
+            if self._login_used:
+                self._login_code = None
+                self.token = secrets.token_urlsafe(32)
+                log.warning("login code presented twice: session token replaced")
+                return None
+            if time.monotonic() > self._login_expires:
+                self._login_code = None
+                return None
+            self._login_used = True
+            return self.token
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -232,6 +273,8 @@ class Handler(BaseHTTPRequestHandler):
     def _api(self, method: str, path: str, query: dict) -> None:
         if not self._same_origin():
             return self._error(403, "Origine refusée.", "bad_origin")
+        if method == "POST" and path == "/api/session":
+            return self._session()
         if not self._token_ok():
             return self._error(401, "Jeton de session invalide. Relancez l'application.", "bad_token")
         fn, params = self.server.router.match(method, path)
@@ -245,6 +288,19 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, result if result is not None else {"ok": True})
         except ApiError as e:
             self._error(e.status, str(e), e.code)
+
+    def _session(self) -> None:
+        """Token-less: trade the one-time login code of an elevated window for the session token."""
+        if self.headers.get("Origin") not in self.server.allowed_origins:
+            return self._error(403, "Origine refusée.", "bad_origin")
+        try:
+            body = self._read_json()
+        except ApiError as e:
+            return self._error(e.status, str(e), e.code)
+        token = self.server.redeem_login_code(body.get("code"))
+        if token is None:
+            return self._error(401, "Code de connexion invalide ou expiré. Relancez l'application.", "bad_code")
+        self._json(200, {"token": token})
 
     def _static(self, path: str) -> None:
         if path == "/":
