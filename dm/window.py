@@ -48,10 +48,10 @@ _PRIVACY_FLAGS = [
     "--disable-features=Translate,OptimizationHints,MediaRouter,AutofillServerCommunication,"
     "msEdgeShopping,msUndersideButton,EdgeCollections",
     # Hard network lock: the flags above still leave Edge's own services
-    # (config, SmartScreen...) talking to Microsoft. Every hostname now fails to
-    # resolve and any other traffic goes to a dead local proxy. Only 127.0.0.1
-    # (the app itself) is excluded from both, so it stays reachable.
-    "--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE 127.0.0.1",
+    # (config, SmartScreen...) talking to Microsoft: all traffic goes to a dead
+    # local proxy (hostnames are then resolved by the proxy, never locally).
+    # Only 127.0.0.1 (the app itself) bypasses it. --host-resolver-rules is not
+    # used: Edge flags it with an "unsupported command-line flag" warning bar.
     "--proxy-server=http://127.0.0.1:9",
     "--proxy-bypass-list=127.0.0.1",
     "--disable-quic",

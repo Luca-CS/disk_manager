@@ -253,8 +253,9 @@ export function needScan(ctx, { what = 'cette vue' } = {}) {
   return wrap;
 }
 
+/** Banner in dry-run mode; otherwise an empty fragment (safe for Node.append, which would print "null"). */
 export function dryRunBanner() {
   return store.get('meta')?.dry_run
     ? banner('warning', 'info', 'Mode simulation activé : les suppressions sont simulées, aucun fichier n’est modifié.')
-    : null;
+    : document.createDocumentFragment();
 }
