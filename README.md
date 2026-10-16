@@ -65,8 +65,10 @@ lancement suivant.
 
 Le bouton « Relancer en administrateur » sert uniquement à nettoyer les caches système (Windows Update,
 fichiers temporaires de Windows…). Dans ce mode, l'application exécute le code de ce dossier avec des droits
-élevés : ne l'utilisez que si ce dossier n'est modifiable que par vous (ou installez l'application dans un
-emplacement protégé comme `C:\Program Files`). Le jeton de session n'est jamais écrit sur disque en mode
+élevés : ne l'utilisez que si ce dossier, et celui de Python, ne sont modifiables que par vous (ou installez
+l'application et Python dans un emplacement protégé comme `C:\Program Files`). Un programme malveillant déjà
+actif sous votre compte pourrait sinon modifier ce code avant que vous ne passiez en administrateur : les
+protections ci-dessous ferment les autres portes, pas celle-là. Le jeton de session n'est jamais écrit sur disque en mode
 administrateur, ni placé sur la ligne de commande de la fenêtre (lisible par tous les programmes de la
 session) : la fenêtre reçoit à la place un code à usage unique, valable quelques secondes, que la page échange
 contre le jeton puis garde uniquement en mémoire. Si un autre programme utilise ce code avant la fenêtre, le
@@ -74,10 +76,40 @@ jeton est aussitôt renouvelé : la session volée ne sert à rien, et la fenêt
 (relancez alors l'application). Pour la même raison, recharger la page (F5) en mode administrateur ferme la
 session.
 
+En administrateur, l'application ne lit et n'écrit rien qu'un programme non administrateur aurait pu préparer :
+
+- Elle n'utilise pas `data/` (modifiable par tous les programmes de la session : un lien posé à la place du
+  journal ou de `app.log` ferait écrire, ou renommer lors de la rotation du journal technique, n'importe quel
+  fichier avec les droits administrateur). Ses analyses enregistrées, son historique, son journal, son journal
+  technique `app.log` et son profil de navigateur sont rangés dans `C:\ProgramData\Disk Manager`. Ce dossier
+  est créé au premier lancement en administrateur avec des droits réservés aux Administrateurs et à SYSTEM,
+  puis vérifié avant chaque écriture : s'il appartient à quelqu'un d'autre, donne des droits à d'autres comptes
+  ou est remplacé par un lien, l'application refuse de démarrer et affiche un message. Supprimez alors ce
+  dossier et relancez. Conséquences : le mode administrateur repart sans les analyses du mode normal (il faut
+  relancer une analyse) et tient son propre historique et son propre journal. Le dossier reste après
+  désinstallation : supprimez-le à la main.
+- Les emplacements système (`C:\Windows`, `Program Files`, `ProgramData`, votre profil, `AppData`, dossier
+  temporaire) ne sont pas lus dans les variables d'environnement : un processus administrateur hérite de
+  celles de l'utilisateur, que n'importe quel programme peut modifier (`HKCU\Environment`). Ils viennent de
+  Windows lui-même (dossier Windows, registre machine, compte du processus) ; `AppData` et le dossier
+  temporaire sont leurs emplacements par défaut dans le profil. Les règles de nettoyage et les zones protégées
+  reposent sur ces emplacements.
+- PowerShell (informations disques) et le navigateur sont lancés avec un environnement réduit à ces valeurs
+  sûres : par exemple, une variable `PSModulePath` posée par un autre programme ferait sinon charger son propre
+  module « Storage » par le PowerShell administrateur. Python est relancé avec `-E -s -B` (variables `PYTHON*`
+  et paquets Python de l'utilisateur ignorés, aucun fichier `.pyc` écrit).
+- Le navigateur de la fenêtre est pris uniquement dans `Program Files` (Edge, Chrome ou Brave), jamais dans une installation
+  par utilisateur ; sans navigateur de ce type, le mode administrateur ne s'ouvre pas (pas de repli sur le
+  navigateur par défaut, qui tournerait en administrateur sur le profil ordinaire).
+- Un lancement en administrateur ne rejoint jamais une instance déjà ouverte : `data/instance.json` est
+  modifiable sans droits, son port et son jeton pourraient diriger la fenêtre vers un autre programme. Une
+  nouvelle instance démarre toujours.
+
 ## Données locales
 
 Tout est rangé dans `data/` (ignoré par git) : analyses enregistrées, historique, journal, profil isolé de la
-fenêtre, journal technique `app.log`. Supprimer ce dossier remet l'application à zéro.
+fenêtre, journal technique `app.log`. Supprimer ce dossier remet l'application à zéro. En mode administrateur,
+les mêmes fichiers sont dans `C:\ProgramData\Disk Manager` (voir « Mode administrateur »).
 
 ## Développement
 

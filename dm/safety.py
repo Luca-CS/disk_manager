@@ -164,10 +164,8 @@ _profiles_cache: tuple[float, tuple[str, ...]] = (float("-inf"), ())
 
 
 def _expand_profile_path(value) -> str | None:
-    if not isinstance(value, str):
-        return None
-    p = os.path.normpath(os.path.expandvars(value))
-    return p if _DRIVE_ABS.match(p) and not _is_drive_root(p) else None
+    p = config.expand_system_vars(value)  # not os.path.expandvars: the environment is the user's
+    return p if p and not _is_drive_root(p) else None
 
 
 def _read_profile_list() -> tuple[list[str], str | None]:

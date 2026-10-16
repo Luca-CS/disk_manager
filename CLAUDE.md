@@ -43,7 +43,10 @@ whitelist, strict CSP (`script-src 'self'`, no inline JS). The token reaches the
 instead (`#c=`, `run._window_url`), traded once within 15 s by the token-less `POST /api/session`; the page then
 keeps the token in memory only (command lines and the Edge profile are readable by non-admin processes).
 `data/instance.json` (pid/port/token) implements single-instance; it is never written in `--no-window` mode or
-when elevated.
+when elevated. Elevated (`config.ELEVATED`), nothing user-writable is trusted: `config.DATA_DIR` is the
+Administrators+SYSTEM-only `%ProgramData%\Disk Manager` (checked by `config.ensure_data_dirs` before every write),
+system/profile locations come from `config._trusted_locations()` (kernel, HKLM, process token — not env vars), and
+child processes get `config.child_env()`.
 
 **Long operations are tasks** (`dm/tasks.py`): a POST starts a thread and returns the task dict; the UI polls
 `GET /api/tasks/<id>`. One running task per group: `scan` (scan, dupes), `clean` (clean_analyze), `delete`

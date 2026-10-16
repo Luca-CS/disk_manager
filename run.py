@@ -68,6 +68,58 @@ def _existing_instance() -> dict | None:
         return None
 
 
+def _hand_off_to_running_instance(elevated: bool) -> bool:
+    """Open a window on the instance already running, if any. Returns True if one was opened.
+
+    Never when elevated: data/instance.json is writable by every process of the user, so its
+    port and token could point an elevated window at a server of their choosing."""
+    if elevated:
+        return False
+    running = _existing_instance()
+    if not running:
+        return False
+    window.open_window(f"http://127.0.0.1:{running['port']}/#t={running['token']}")
+    return True
+
+
+_ADMIN_WINDOW_ERROR = (
+    "Disk Manager ne peut pas ouvrir sa fenêtre en mode administrateur.\n\n"
+    "Ce mode a besoin de Microsoft Edge (ou Chrome, Brave) installé dans Program Files et d'un dossier de "
+    "profil modifiable uniquement par les administrateurs :\n{root}\n\n"
+    "Si ce dossier existe sans être protégé (créé par un autre programme), supprimez-le puis relancez "
+    "l'application. Le mode normal n'est pas concerné.")
+
+
+_ADMIN_DATA_ERROR = (
+    "Disk Manager ne peut pas démarrer en mode administrateur.\n\n"
+    "En mode administrateur, l'application n'écrit que dans un dossier modifiable uniquement par les "
+    "administrateurs :\n{root}\n\n"
+    "Ce dossier existe sans être protégé (créé par un autre programme), ou l'emplacement du dossier Windows "
+    "ou de votre profil n'a pas pu être lu. Supprimez ce dossier s'il existe, puis relancez l'application. "
+    "Le mode normal n'est pas concerné.")
+
+
+def _start_logging() -> bool:
+    """Set up logging. False if the elevated instance has no trusted place to write to: it then
+    writes nothing at all (data/ is the user's, see config.ensure_data_dirs)."""
+    if config.ELEVATED and not config.TRUSTED_LOCATIONS_OK:
+        return False
+    try:
+        _setup_logging()
+    except PermissionError:
+        if not config.ELEVATED:
+            raise
+        return False
+    return True
+
+
+def _elevate_params(script: str) -> str:
+    """Command line of the elevated instance. -E -s: ignore PYTHON* variables and the user's
+    site-packages (both writable by the user, both able to run code at start-up); -B: no .pyc
+    written by the administrator into the app folder."""
+    return f'-E -s -B "{script}" --after-elevate' + (" --dry-run" if os.environ.get("DM_DRY_RUN") == "1" else "")
+
+
 def _window_url(server: AppServer, elevated: bool) -> str:
     """URL opened in the app window. Any process of the user can read the browser's command line, so an
     elevated window gets a one-time code (traded for the token by web/js/api.js) instead of the token."""
@@ -77,24 +129,23 @@ def _window_url(server: AppServer, elevated: bool) -> str:
 
 
 def main() -> int:
-    _setup_logging()
+    if not _start_logging():
+        winapi.show_error(config.APP_NAME, _ADMIN_DATA_ERROR.format(root=config.DATA_DIR))
+        return 1
     if ARGS.install_shortcut:
         from dm import shortcut
         made = shortcut.install_shortcuts()
         print("\n".join(f"Raccourci créé : {p}" for p in made) or "Aucun raccourci créé.")
         return 0 if made else 1
+    elevated = config.ELEVATED
     if ARGS.after_elevate:
         time.sleep(1.5)  # let the previous (non-elevated) instance close its window
-    elif not ARGS.no_window:
-        running = _existing_instance()
-        if running:
-            window.open_window(f"http://127.0.0.1:{running['port']}/#t={running['token']}")
-            return 0
+    elif not ARGS.no_window and _hand_off_to_running_instance(elevated):
+        return 0
 
     state = AppState()
     server = AppServer(build_router(state))
     url = f"{server.url}#t={server.token}"
-    elevated = winapi.is_admin()
     # Dev/test servers never register as the main instance, and an elevated
     # instance never writes its token to the (user-writable) data folder.
     if not ARGS.no_window and not elevated:
@@ -106,7 +157,12 @@ def main() -> int:
     log.info("Disk Manager listening on %s (admin=%s, dry_run=%s)", server.url, elevated,
              os.environ.get("DM_DRY_RUN") == "1")
 
-    proc = None if ARGS.no_window else window.open_window(_window_url(server, elevated))
+    proc = None if ARGS.no_window else window.open_window(_window_url(server, elevated), elevated=elevated)
+    if proc is None and elevated and not ARGS.no_window:
+        log.error("elevated window not opened: no trusted browser or profile folder")
+        server.shutdown()
+        winapi.show_error(config.APP_NAME, _ADMIN_WINDOW_ERROR.format(root=window.admin_profile_root() or "?"))
+        return 1
     if proc is not None:
         state.window_pids = {proc.pid}
     if ARGS.no_window:
@@ -122,8 +178,7 @@ def main() -> int:
         if exe.lower().endswith("python.exe"):
             exe = exe[:-10] + "pythonw.exe"
         script = os.path.abspath(__file__)
-        params = f'"{script}" --after-elevate' + (" --dry-run" if os.environ.get("DM_DRY_RUN") == "1" else "")
-        if not winapi.relaunch_as_admin(exe, params, os.path.dirname(script)):
+        if not winapi.relaunch_as_admin(exe, _elevate_params(script), os.path.dirname(script)):
             return False
         threading.Timer(0.5, stop.set).start()
         return True
@@ -145,12 +200,13 @@ def main() -> int:
     if proc is not None and proc.poll() is None:
         proc.terminate()
     server.shutdown()
-    try:
-        info = json.loads(config.INSTANCE_PATH.read_text(encoding="utf-8"))
-        if info.get("pid") == os.getpid():
-            config.INSTANCE_PATH.unlink()
-    except (OSError, ValueError):
-        pass
+    if not elevated:  # an elevated instance never wrote it, and never touches the user-writable file
+        try:
+            info = json.loads(config.INSTANCE_PATH.read_text(encoding="utf-8"))
+            if info.get("pid") == os.getpid():
+                config.INSTANCE_PATH.unlink()
+        except (OSError, ValueError):
+            pass
     return 0
 
 

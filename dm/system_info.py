@@ -5,6 +5,7 @@ Implementation rules
   run with the absolute path %SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe,
   args ["-NoProfile", "-NonInteractive", "-NoLogo", "-Command", SCRIPT],
   creationflags=subprocess.CREATE_NO_WINDOW, timeout 30 s, output = ConvertTo-Json -Compress.
+  Elevated, the environment is config.child_env() (no user-set PSModulePath...).
 * Cmdlets: Get-PhysicalDisk, Get-Disk, Get-Partition, Get-Volume and, wrapped in
   try/catch because it needs admin, Get-StorageReliabilityCounter.
 * Cache the result for 5 minutes (thread-safe); ``refresh=True`` forces a new run.
@@ -153,7 +154,8 @@ def _build(raw: dict) -> list[dict]:
 def _collect() -> list[dict]:
     exe = os.path.join(config.SYSTEM_ROOT, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
     proc = subprocess.run([exe, "-NoProfile", "-NonInteractive", "-NoLogo", "-Command", _SCRIPT],
-                          capture_output=True, timeout=30, creationflags=subprocess.CREATE_NO_WINDOW)
+                          capture_output=True, timeout=30, env=config.child_env(),
+                          creationflags=subprocess.CREATE_NO_WINDOW)
     out = proc.stdout.decode("utf-8", "replace").strip().lstrip("﻿")
     if proc.returncode != 0 or not out:
         err = proc.stderr.decode("utf-8", "replace").strip()

@@ -150,7 +150,7 @@ def list_volumes() -> list[dict]:
             "total": total,
             "free": free,
             "used": total - free,
-            "is_system": root.lower() == (os.environ.get("SystemDrive", "C:") + "\\").lower(),
+            "is_system": root.lower() == (system_windows_dir() or "C:")[:2].lower() + "\\",
         })
     return out
 
@@ -469,3 +469,228 @@ def open_system_target(target: str, params: str | None = None) -> bool:
 def relaunch_as_admin(executable: str, params: str, cwd: str) -> bool:
     rc = shell32.ShellExecuteW(None, "runas", executable, params, cwd, 1)
     return (rc or 0) > 32
+
+
+user32 = ctypes.WinDLL("user32", use_last_error=True)
+user32.MessageBoxW.argtypes = [wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.UINT]
+user32.MessageBoxW.restype = ctypes.c_int
+
+
+def show_error(title: str, text: str) -> None:
+    """Modal error box (the app runs under pythonw: there is no console to print to)."""
+    user32.MessageBoxW(None, text, title, 0x10 | 0x10000)  # MB_ICONERROR | MB_SETFOREGROUND
+
+
+# --- known folders -------------------------------------------------------------
+# Program Files is read from HKLM, unlike %ProgramFiles%, which the user can override in
+# HKCU\Environment and an elevated process inherits. Not every known folder is: ProgramData,
+# LocalAppData... are expanded from the environment (SystemDrive, USERPROFILE). For those,
+# see config._trusted_locations.
+class GUID(ctypes.Structure):
+    _fields_ = [("Data1", wintypes.DWORD), ("Data2", wintypes.WORD), ("Data3", wintypes.WORD),
+                ("Data4", ctypes.c_ubyte * 8)]
+
+    def __init__(self, text: str):
+        h = text.strip("{}").replace("-", "")
+        super().__init__(int(h[:8], 16), int(h[8:12], 16), int(h[12:16], 16),
+                         (ctypes.c_ubyte * 8)(*bytes.fromhex(h[16:])))
+
+
+FOLDERID_PROGRAM_DATA = "{62AB5D82-FDC1-4DC3-A9DD-070D1D495D97}"
+FOLDERID_PROGRAM_FILES = "{905E63B6-C1BF-494E-B29C-65B732D3D21A}"
+FOLDERID_PROGRAM_FILES_X86 = "{7C5A40EF-A0FB-4BFC-874A-C0F2E0B9FA8E}"
+shell32.SHGetKnownFolderPath.argtypes = [ctypes.POINTER(GUID), wintypes.DWORD, wintypes.HANDLE,
+                                         ctypes.POINTER(wintypes.LPWSTR)]
+shell32.SHGetKnownFolderPath.restype = ctypes.c_long
+ole32.CoTaskMemFree.argtypes = [ctypes.c_void_p]
+ole32.CoTaskMemFree.restype = None
+
+
+def known_folder(folder_id: str) -> str | None:
+    out = wintypes.LPWSTR()
+    hr = shell32.SHGetKnownFolderPath(ctypes.byref(GUID(folder_id)), 0, None, ctypes.byref(out))
+    try:
+        return out.value if hr == 0 and out.value else None
+    finally:
+        if out:
+            ole32.CoTaskMemFree(out)
+
+
+# --- private folders: owned by and writable only by given accounts ------------
+advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+
+SID_SYSTEM = "S-1-5-18"
+SID_ADMINISTRATORS = "S-1-5-32-544"
+SID_TRUSTED_INSTALLER = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"
+ADMIN_SIDS = frozenset({SID_SYSTEM, SID_ADMINISTRATORS})
+# Owner Administrators, protected DACL (nothing inherited from the parent), full
+# control for SYSTEM and Administrators only, inherited by everything created inside.
+SDDL_ADMIN_ONLY = "O:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)"
+
+
+class SECURITY_ATTRIBUTES(ctypes.Structure):
+    _fields_ = [("nLength", wintypes.DWORD), ("lpSecurityDescriptor", ctypes.c_void_p),
+                ("bInheritHandle", wintypes.BOOL)]
+
+
+class _ACL(ctypes.Structure):
+    _fields_ = [("AclRevision", ctypes.c_ubyte), ("Sbz1", ctypes.c_ubyte), ("AclSize", wintypes.WORD),
+                ("AceCount", wintypes.WORD), ("Sbz2", wintypes.WORD)]
+
+
+class _ACCESS_ACE(ctypes.Structure):  # ACCESS_ALLOWED_ACE / ACCESS_DENIED_ACE; the SID starts at SidStart
+    _fields_ = [("AceType", ctypes.c_ubyte), ("AceFlags", ctypes.c_ubyte), ("AceSize", wintypes.WORD),
+                ("Mask", wintypes.DWORD), ("SidStart", wintypes.DWORD)]
+
+
+ACCESS_ALLOWED_ACE_TYPE = 0
+ACCESS_DENIED_ACE_TYPE = 1
+READ_CONTROL = 0x00020000
+_SE_FILE_OBJECT = 1
+_OWNER_SECURITY_INFORMATION = 0x1
+_DACL_SECURITY_INFORMATION = 0x4
+_SE_DACL_PRESENT = 0x0004
+_SE_DACL_PROTECTED = 0x1000
+ERROR_ALREADY_EXISTS = 183
+
+advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW.argtypes = [
+    wintypes.LPCWSTR, wintypes.DWORD, ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(wintypes.ULONG)]
+advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW.restype = wintypes.BOOL
+advapi32.GetSecurityInfo.argtypes = [wintypes.HANDLE, ctypes.c_int, wintypes.DWORD,
+                                     ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(ctypes.c_void_p),
+                                     ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(ctypes.c_void_p),
+                                     ctypes.POINTER(ctypes.c_void_p)]
+advapi32.GetSecurityInfo.restype = wintypes.DWORD
+advapi32.GetSecurityDescriptorControl.argtypes = [ctypes.c_void_p, ctypes.POINTER(wintypes.WORD),
+                                                  ctypes.POINTER(wintypes.DWORD)]
+advapi32.GetSecurityDescriptorControl.restype = wintypes.BOOL
+advapi32.GetAce.argtypes = [ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(ctypes.c_void_p)]
+advapi32.GetAce.restype = wintypes.BOOL
+advapi32.ConvertSidToStringSidW.argtypes = [ctypes.c_void_p, ctypes.POINTER(wintypes.LPWSTR)]
+advapi32.ConvertSidToStringSidW.restype = wintypes.BOOL
+kernel32.CreateDirectoryW.argtypes = [wintypes.LPCWSTR, ctypes.POINTER(SECURITY_ATTRIBUTES)]
+kernel32.CreateDirectoryW.restype = wintypes.BOOL
+kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+kernel32.LocalFree.restype = ctypes.c_void_p
+
+
+def _sid_string(psid) -> str | None:
+    out = wintypes.LPWSTR()
+    if not advapi32.ConvertSidToStringSidW(psid, ctypes.byref(out)):
+        return None
+    try:
+        return out.value
+    finally:
+        kernel32.LocalFree(out)
+
+
+def security_info(path: str) -> dict | None:
+    """Owner and DACL of a directory, read through a handle that does not follow
+    reparse points: {"owner", "protected", "aces": [(ace type, sid)]}. None when
+    `path` is not a plain directory (missing, file, junction, symlink...)."""
+    with Handle(path, READ_CONTROL | FILE_READ_ATTRIBUTES) as h:
+        if h.h is None:
+            return None
+        attrs = h.attributes()
+        if attrs is None or attrs[0] & FILE_ATTRIBUTE_REPARSE_POINT or not attrs[0] & FILE_ATTRIBUTE_DIRECTORY:
+            return None
+        owner, dacl, sd = ctypes.c_void_p(), ctypes.c_void_p(), ctypes.c_void_p()
+        if advapi32.GetSecurityInfo(h.h, _SE_FILE_OBJECT, _OWNER_SECURITY_INFORMATION | _DACL_SECURITY_INFORMATION,
+                                    ctypes.byref(owner), None, ctypes.byref(dacl), None, ctypes.byref(sd)):
+            return None
+    try:
+        control, rev = wintypes.WORD(), wintypes.DWORD()
+        if not advapi32.GetSecurityDescriptorControl(sd, ctypes.byref(control), ctypes.byref(rev)):
+            return None
+        aces = None  # no DACL at all = full access for everyone
+        if control.value & _SE_DACL_PRESENT and dacl.value:
+            aces = []
+            for i in range(_ACL.from_address(dacl.value).AceCount):
+                pace = ctypes.c_void_p()
+                if not advapi32.GetAce(dacl, i, ctypes.byref(pace)):
+                    return None
+                ace = _ACCESS_ACE.from_address(pace.value)
+                sid = None
+                if ace.AceType in (ACCESS_ALLOWED_ACE_TYPE, ACCESS_DENIED_ACE_TYPE):
+                    sid = _sid_string(pace.value + _ACCESS_ACE.SidStart.offset)
+                aces.append((ace.AceType, sid))
+        return {"owner": _sid_string(owner), "protected": bool(control.value & _SE_DACL_PROTECTED), "aces": aces}
+    finally:
+        kernel32.LocalFree(sd)
+
+
+def is_private_dir(path: str, allowed_sids=ADMIN_SIDS) -> bool:
+    """True if `path` is a real directory (no link) owned by one of `allowed_sids`,
+    whose DACL is protected from inheritance and grants access to nobody else."""
+    info = security_info(path)
+    if info is None or info["owner"] not in allowed_sids or not info["protected"] or info["aces"] is None:
+        return False
+    for ace_type, sid in info["aces"]:
+        if ace_type == ACCESS_DENIED_ACE_TYPE:
+            continue
+        if ace_type != ACCESS_ALLOWED_ACE_TYPE or sid not in allowed_sids:
+            return False  # another grantee, or an ACE kind not checked here (callback, object...)
+    return True
+
+
+def ensure_private_dir(path: str, allowed_sids=ADMIN_SIDS, sddl: str = SDDL_ADMIN_ONLY) -> bool:
+    """Create `path` with security descriptor `sddl` (applied atomically by
+    CreateDirectoryW), or accept an existing one; then check it with
+    is_private_dir. An existing folder with a looser owner/DACL, or a link, is refused."""
+    sd, size = ctypes.c_void_p(), wintypes.ULONG()
+    if not advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, 1, ctypes.byref(sd),
+                                                                         ctypes.byref(size)):
+        return False
+    try:
+        sa = SECURITY_ATTRIBUTES(ctypes.sizeof(SECURITY_ATTRIBUTES), sd, False)
+        if not kernel32.CreateDirectoryW(path, ctypes.byref(sa)) and ctypes.get_last_error() != ERROR_ALREADY_EXISTS:
+            return False
+    finally:
+        kernel32.LocalFree(sd)
+    return is_private_dir(path, allowed_sids)
+
+
+# --- trusted system locations (never from environment variables) ------------
+# An elevated process inherits the user's environment (HKCU\Environment is
+# writable by the user), and some known folders (ProgramData, LocalAppData...)
+# are expanded from it: SystemDrive, USERPROFILE... are not trusted then.
+kernel32.GetSystemWindowsDirectoryW.argtypes = [wintypes.LPWSTR, wintypes.UINT]
+kernel32.GetSystemWindowsDirectoryW.restype = wintypes.UINT
+kernel32.GetLongPathNameW.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD]
+kernel32.GetLongPathNameW.restype = wintypes.DWORD
+kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+advapi32.OpenProcessToken.argtypes = [wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE)]
+advapi32.OpenProcessToken.restype = wintypes.BOOL
+userenv = ctypes.WinDLL("userenv", use_last_error=True)
+userenv.GetUserProfileDirectoryW.argtypes = [wintypes.HANDLE, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)]
+userenv.GetUserProfileDirectoryW.restype = wintypes.BOOL
+TOKEN_QUERY = 0x0008
+
+
+def system_windows_dir() -> str | None:
+    """The Windows folder as the kernel knows it (shared, not %SystemRoot%)."""
+    buf = ctypes.create_unicode_buffer(1024)
+    n = kernel32.GetSystemWindowsDirectoryW(buf, len(buf))
+    return buf.value if 0 < n < len(buf) else None
+
+
+def user_profile_dir() -> str | None:
+    """Profile folder of the account running this process, from HKLM ProfileList (not %USERPROFILE%)."""
+    token = wintypes.HANDLE()
+    if not advapi32.OpenProcessToken(kernel32.GetCurrentProcess(), TOKEN_QUERY, ctypes.byref(token)):
+        return None
+    try:
+        size = wintypes.DWORD(1024)
+        buf = ctypes.create_unicode_buffer(size.value)
+        if not userenv.GetUserProfileDirectoryW(token, buf, ctypes.byref(size)):
+            return None
+        return buf.value or None
+    finally:
+        kernel32.CloseHandle(token)
+
+
+def long_path(path: str) -> str:
+    """Expand 8.3 short names (C:\\Users\\JOHNDO~1) without resolving links, unlike realpath."""
+    buf = ctypes.create_unicode_buffer(1024)
+    n = kernel32.GetLongPathNameW(path, buf, len(buf))
+    return buf.value if 0 < n < len(buf) else path
