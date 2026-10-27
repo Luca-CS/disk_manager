@@ -3,6 +3,10 @@
 Gestionnaire de stockage **100 % local** pour Windows : visualiser ce qui occupe votre disque, comprendre où
 part l'espace et le libérer en toute sécurité.
 
+![Démonstration : analyse d'un dossier, carte des fichiers, doublons et nettoyage classé par risque](docs/demo.gif)
+
+*Démo en mode simulation (`--dry-run`) sur un dossier de faux fichiers : rien n'est supprimé. Les informations de disque, d'applications et de nettoyage affichées sont fictives.*
+
 ## Lancer l'application
 
 - Double-cliquez sur **`Disk Manager.cmd`** : une fenêtre d'application s'ouvre (Edge en mode application,

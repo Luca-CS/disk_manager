@@ -3,3 +3,4 @@
 *.bat text eol=crlf
 *.ico binary
 *.png binary
+*.gif binary
